@@ -4,6 +4,11 @@
 #include <string>
 #include <vector>
 
+// Standar library includes for threading
+#include <future>
+#include <thread>
+#include <chrono>
+
 // Our project headers
 #include "CipherFactory.hpp"
 #include "CipherMode.hpp"
@@ -108,8 +113,56 @@ int main(int argc, char* argv[])
     return 1;
   }
 
+  const size_t nThreads{ 4 };
+
+  // String to store encrypted text
+  std::string outputText {""};
+
   // Run the cipher on the input text, specifying whether to encrypt/decrypt
-  std::string outputText { cipher->applyCipher( inputText, settings.cipherMode ) };
+  // If type is Caesar use multithreading, otherwise run in single thread
+  if ( settings.cipherType == CipherType::Caesar ){
+
+    // Lambda to call applyCipher on CaesarCipher object
+    auto applyCipherToSubstr = [ &cipher, &settings ] ( const std::string cipherInputText ) {
+      return cipher->applyCipher(  cipherInputText, settings.cipherMode );
+    };
+
+    // Get length of substr that input will be divided into (rounding up)
+    size_t substr_len = (inputText.size() + nThreads - 1) / nThreads;
+    std::string inputTextSubStr {""};
+    
+    std::vector< std::future< std::string > > futures;
+    
+    // Loop over nThreads setting off encryption of each substring
+    for(size_t i = 0; i < nThreads; i++){
+      // Get substring containing 1/nThreads of text to input
+      inputTextSubStr = inputText.substr ( i*substr_len, substr_len );
+      // Start a thread encrypting part of inputText
+      std::cout << "Sending off a new thread to encrypt: " << inputTextSubStr << std::endl;
+      futures.push_back( std::async(std::launch::async, applyCipherToSubstr, inputTextSubStr ));
+    }
+
+    //Wait for all threads to finish
+    std::future_status status{ std::future_status::ready };
+    bool allFinished{ true };
+    do {
+      allFinished = true;
+      for( auto& future : futures){
+        status = future.wait_for(std::chrono::milliseconds(500));
+        if ( status != std::future_status::ready ) allFinished = false;
+      }
+    } while ( allFinished == false );
+
+    std::cout << "All threads finished!" << std::endl;
+
+    // Put the output string back together
+    std::cout << "Putting the output back together..." << std::endl;
+    for( auto& future : futures){
+      outputText += future.get();
+    }
+  } else {
+    outputText += cipher->applyCipher( inputText, settings.cipherMode );
+  }
 
   // Output the transliterated text
   if (!settings.outputFile.empty()) {
